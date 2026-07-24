@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+.streamlit/
+data/processed/update_data_last_run.log
