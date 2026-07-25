@@ -268,6 +268,37 @@ def run():
     r1_ok2, r2_ok2, r3_ok2, detail2 = tier_correctness(tiers, primary_pool, RANK)
     check("T9: R1-R3 tier correctness re-confirmed for the primary test case", r1_ok2 and r2_ok2 and r3_ok2, detail2)
 
+    # ------------------------------------------------------------------
+    # T10: same-name, different-code colleges (E003 and E048 are both
+    # "B M S College of Engineering, Basavanagudi, Bangalore" but are
+    # distinct KEA entries with different cutoffs in every branch/category
+    # combo checked - 0/38 identical). At rank=30000, CIVIL ENGINEERING,
+    # GMH: E003 fails R1 (26404) but clears R2 (32952) -> Possible; E048
+    # clears R1 (33471) -> Strong Chance. Both must appear, tagged with
+    # their own distinct codes, neither merged nor deduped by name.
+    # ------------------------------------------------------------------
+    print()
+    bms_branch = "CIVIL ENGINEERING"
+    bms_category = "GMH"
+    bms_rank = 30000
+    bms_tiers, bms_year = predict(df, bms_rank, bms_category, bms_branch, True)
+
+    e003 = next((c for c in bms_tiers["Possible"] if c["college_code"] == "E003"), None)
+    e048 = next((c for c in bms_tiers["Strong Chance"] if c["college_code"] == "E048"), None)
+    check("T10: E003 (BMS) appears in Possible tier with its own code", e003 is not None)
+    check("T10: E048 (BMS) appears in Strong Chance tier with its own code", e048 is not None)
+    if e003 and e048:
+        check(
+            "T10: E003 and E048 share the same college_name but are NOT the same college_code",
+            e003["college_name"] == e048["college_name"] and e003["college_code"] != e048["college_code"],
+            detail=f"E003 name={e003['college_name']!r} E048 name={e048['college_name']!r}",
+        )
+        check(
+            "T10: E003 and E048 carry different cutoff_rank values (not merged/deduped)",
+            e003["cutoff_rank"] != e048["cutoff_rank"],
+            detail=f"E003={e003['cutoff_rank']} E048={e048['cutoff_rank']}",
+        )
+
     print()
     print("=" * 70)
     if failures:

@@ -70,6 +70,7 @@ def _explanation(result, rank):
 def render_card(result, rank):
     tier = result["tier"]
     style = TIER_STYLE[tier]
+    code = html.escape(result["college_code"])
     college = html.escape(result["college_name"])
     branch = html.escape(expand_branch_label(result["branch_name"]))
     explanation = html.escape(_explanation(result, rank))
@@ -79,7 +80,10 @@ def render_card(result, rank):
 <div style="border:1px solid {style['border']}; background:{style['bg']};
             border-radius:10px; padding:14px 18px; margin-bottom:12px;">
   <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
-    <div style="font-size:1.05rem; font-weight:600; color:#111;">{college}</div>
+    <div style="font-size:1.05rem; font-weight:600; color:#111;">
+      <span style="background:#111; color:white; padding:1px 8px; border-radius:6px;
+                   font-size:0.85rem; font-weight:700; margin-right:8px;">{code}</span>{college}
+    </div>
     <div style="background:{style['border']}; color:white; padding:3px 12px;
                 border-radius:999px; font-size:0.85rem; font-weight:600; white-space:nowrap;">
       {tier}
