@@ -213,4 +213,38 @@ def predict(df, rank, category_code, branch_name, is_hk):
         tiers[tier_name].sort(key=lambda c: abs(rank - c["cutoff_rank"]))
         tiers[tier_name] = tiers[tier_name][:RESULTS_PER_TIER]
 
+    _warn_on_large_tier_gaps(tiers, rank, category_code, branch_name)
+
     return tiers, year
+
+
+def _warn_on_large_tier_gaps(tiers, rank, category_code, branch_name, ratio=5):
+    """Console-only sanity check (never blocks or filters results): if
+    Possible's or Unlikely's closest cutoff is more than `ratio` times
+    farther from the student's rank than Strong Chance's average gap, print
+    a warning. This doesn't mean the result is wrong - a college can
+    legitimately have zero seats in an earlier round (a confirmed "--" in
+    the source PDF, not missing data) and a real, much later cutoff in a
+    subsequent round - but it's worth a human glancing at when a branch or
+    category genuinely has no close options in a given tier."""
+    strong = tiers.get("Strong Chance", [])
+    if not strong:
+        return
+    baseline = sum(c["cutoff_rank"] - rank for c in strong) / len(strong)
+    if baseline <= 0:
+        return
+    for tier_name in ("Possible", "Unlikely"):
+        results = tiers.get(tier_name, [])
+        if not results:
+            continue
+        gap = results[0]["cutoff_rank"] - rank
+        if gap > ratio * baseline:
+            print(
+                f"[SANITY CHECK] rank={rank} category={category_code} "
+                f"branch={branch_name!r}: {tier_name}'s closest cutoff is "
+                f"{gap:,.0f} away from the student's rank, "
+                f"{gap / baseline:.1f}x the Strong Chance average gap "
+                f"({baseline:,.0f}). Likely means this college had no seats "
+                f"in the earlier round (a real '--' in the source data), "
+                f"not a selection bug - but worth a look if it seems off."
+            )
