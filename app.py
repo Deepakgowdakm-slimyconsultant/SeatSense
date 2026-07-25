@@ -13,6 +13,7 @@ from seatsense.data import (
     load_data,
     predict,
     RESULTS_PER_TIER,
+    ROUND_NO_DATA,
     SUBCAT_LABELS,
     TIER_ROUNDS,
 )
@@ -38,15 +39,40 @@ def get_data():
     return load_data()
 
 
+def _fmt_rank(value):
+    return f"{value:,.1f}" if value % 1 else f"{value:,.0f}"
+
+
+def _explanation(result, rank):
+    tier = result["tier"]
+    round_n = result["round"]
+    cutoff_str = _fmt_rank(result["cutoff_rank"])
+    rank_str = f"{rank:,}"
+    prior_round = result["prior_round"]
+
+    if prior_round is None:
+        # Strong Chance - no earlier round to explain
+        return f"{tier} — Round {round_n} cutoff was rank {cutoff_str}, you are at rank {rank_str}."
+
+    if result["prior_round_status"] == ROUND_NO_DATA:
+        return (
+            f"{tier} — No Round {prior_round} allotment data for this branch, "
+            f"Round {round_n} cutoff was rank {cutoff_str}, you are at rank {rank_str}."
+        )
+
+    prior_cutoff_str = _fmt_rank(result["prior_round_cutoff"])
+    return (
+        f"{tier} — Round {prior_round} cutoff was rank {prior_cutoff_str}, "
+        f"Round {round_n} cutoff was rank {cutoff_str}, you are at rank {rank_str}."
+    )
+
+
 def render_card(result, rank):
     tier = result["tier"]
     style = TIER_STYLE[tier]
     college = html.escape(result["college_name"])
     branch = html.escape(expand_branch_label(result["branch_name"]))
-    cutoff = result["cutoff_rank"]
-    cutoff_str = f"{cutoff:,.1f}" if cutoff % 1 else f"{cutoff:,.0f}"
-    rank_str = f"{rank:,}"
-    round_n = result["round"]
+    explanation = html.escape(_explanation(result, rank))
 
     st.markdown(
         f"""
@@ -61,7 +87,7 @@ def render_card(result, rank):
   </div>
   <div style="color:#444; margin-top:4px;">{branch}</div>
   <div style="color:{style['text']}; margin-top:6px; font-size:0.92rem;">
-    {tier} &mdash; Round {round_n} cutoff was rank {cutoff_str}, you are at rank {rank_str}.
+    {explanation}
   </div>
 </div>
 """,

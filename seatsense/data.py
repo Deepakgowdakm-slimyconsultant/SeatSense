@@ -52,6 +52,19 @@ SUBCAT_LABELS = [
 RESULTS_PER_TIER = 2  # fixed 2+2+2 = 6 colleges total, per the round-based design
 TIER_ROUNDS = [("Strong Chance", 1), ("Possible", 2), ("Unlikely", 3)]
 
+# A round's outcome for a given rank is one of three DISTINCT states, never
+# collapsed into two: CLEARED (a cutoff exists and rank<=cutoff), FAILED (a
+# cutoff exists and rank>cutoff), or NO_DATA (no row for that round at all -
+# e.g. a confirmed "--" in the source PDF, meaning zero seats were offered
+# under that category in that round). FAILED and NO_DATA both mean "didn't
+# clear," so tier assignment treats them the same way, but which ACTUALLY
+# happened must reach the result object and the card text - "you missed the
+# cutoff by X" and "this round didn't offer this category at all" are very
+# different facts for a parent, even though both lead to the same tier.
+ROUND_CLEARED = "CLEARED"
+ROUND_FAILED = "FAILED"
+ROUND_NO_DATA = "NO_DATA"
+
 
 SEAT_TYPE_FOR_HK = {True: "Kalyana Karnataka", False: "Rest of Karnataka"}
 
@@ -146,18 +159,39 @@ def branch_options(df):
     return sorted(subset["branch_name"].dropna().unique().tolist())
 
 
+def _round_status(rounds, round_n, rank):
+    """Returns (status, cutoff) for one round. cutoff is None only when
+    status is ROUND_NO_DATA - CLEARED and FAILED always carry the real
+    cutoff value that produced them."""
+    cutoff = rounds.get(round_n)
+    if cutoff is None:
+        return ROUND_NO_DATA, None
+    if rank <= cutoff:
+        return ROUND_CLEARED, cutoff
+    return ROUND_FAILED, cutoff
+
+
 def predict(df, rank, category_code, branch_name, is_hk):
     """Compare `rank` against Round 1, 2 and 3 cutoffs (all from the same
     reference year) for every college offering `branch_name` under
     `category_code`. Each college is placed in the single best tier it
     qualifies for:
-      - Strong Chance: rank clears the Round 1 cutoff (realistically
-        allotted in Round 1 itself)
-      - Possible: doesn't clear Round 1, but clears Round 2
-      - Unlikely: doesn't clear Round 1 or 2, but clears Round 3
-    A college missing a given round's data is simply skipped for that
-    round's check - never guessed. Within each tier, the closest match to
-    the student's rank is shown first, capped at RESULTS_PER_TIER (2).
+      - Strong Chance: Round 1 = CLEARED
+      - Possible: Round 1 = FAILED or NO_DATA, AND Round 2 = CLEARED
+      - Unlikely: Round 2 = FAILED or NO_DATA, AND Round 3 = CLEARED
+    FAILED (a real cutoff existed and rank didn't clear it) and NO_DATA (no
+    row for that round at all, i.e. a confirmed "--" in the source PDF -
+    zero seats offered under that category that round) both count as "didn't
+    clear" for tier assignment, but which one actually happened is recorded
+    on the result via prior_round / prior_round_status / prior_round_cutoff,
+    so the UI can state the real reason rather than merging them into a
+    silent pass-through. Never promotes a NO_DATA college to a stronger tier
+    just because we lack evidence it would have failed - we simply don't
+    know, so it's treated the same as FAILED for tier purposes and labeled
+    honestly.
+
+    Within each tier, the closest match to the student's rank is shown
+    first, capped at RESULTS_PER_TIER (2).
 
     `is_hk` gates the comparison to the matching seat_type ("Kalyana
     Karnataka" vs "Rest of Karnataka") in addition to the category code -
@@ -168,6 +202,8 @@ def predict(df, rank, category_code, branch_name, is_hk):
 
     Returns (tiers, year) where tiers is a dict:
         {"Strong Chance": [...], "Possible": [...], "Unlikely": [...]}
+    Each result dict has prior_round/prior_round_status/prior_round_cutoff
+    set to None for Strong Chance (there's no earlier round to explain).
     """
     year = reference_year(df)
     seat_type = SEAT_TYPE_FOR_HK[is_hk]
@@ -193,58 +229,65 @@ def predict(df, rank, category_code, branch_name, is_hk):
     tiers = {name: [] for name, _ in TIER_ROUNDS}
     for info in colleges.values():
         rounds = info["rounds"]
-        for tier_name, round_n in TIER_ROUNDS:
-            cutoff = rounds.get(round_n)
-            if cutoff is None:
-                continue  # this college has no data for this round - skip, don't guess
-            if rank <= cutoff:
-                tiers[tier_name].append({
-                    "college_code": info["college_code"],
-                    "college_name": info["college_name"],
-                    "branch_name": info["branch_name"],
-                    "tier": tier_name,
-                    "round": round_n,
-                    "year": year,
-                    "cutoff_rank": cutoff,
-                })
-                break  # only counts toward the earliest (best) tier it clears
+        r1_status, r1_cutoff = _round_status(rounds, 1, rank)
+        r2_status, r2_cutoff = _round_status(rounds, 2, rank)
+        r3_status, r3_cutoff = _round_status(rounds, 3, rank)
+
+        if r1_status == ROUND_CLEARED:
+            tier_name, round_n, cutoff = "Strong Chance", 1, r1_cutoff
+            prior_round, prior_status, prior_cutoff = None, None, None
+        elif r2_status == ROUND_CLEARED:
+            tier_name, round_n, cutoff = "Possible", 2, r2_cutoff
+            prior_round, prior_status, prior_cutoff = 1, r1_status, r1_cutoff
+        elif r3_status == ROUND_CLEARED:
+            tier_name, round_n, cutoff = "Unlikely", 3, r3_cutoff
+            prior_round, prior_status, prior_cutoff = 2, r2_status, r2_cutoff
+        else:
+            continue  # doesn't clear any round - not shown in any tier
+
+        tiers[tier_name].append({
+            "college_code": info["college_code"],
+            "college_name": info["college_name"],
+            "branch_name": info["branch_name"],
+            "tier": tier_name,
+            "round": round_n,
+            "year": year,
+            "cutoff_rank": cutoff,
+            "prior_round": prior_round,
+            "prior_round_status": prior_status,
+            "prior_round_cutoff": prior_cutoff,
+        })
 
     for tier_name in tiers:
         tiers[tier_name].sort(key=lambda c: abs(rank - c["cutoff_rank"]))
         tiers[tier_name] = tiers[tier_name][:RESULTS_PER_TIER]
 
-    _warn_on_large_tier_gaps(tiers, rank, category_code, branch_name)
+    _warn_on_large_tier_gaps(tiers, rank)
 
     return tiers, year
 
 
-def _warn_on_large_tier_gaps(tiers, rank, category_code, branch_name, ratio=5):
-    """Console-only sanity check (never blocks or filters results): if
-    Possible's or Unlikely's closest cutoff is more than `ratio` times
-    farther from the student's rank than Strong Chance's average gap, print
-    a warning. This doesn't mean the result is wrong - a college can
-    legitimately have zero seats in an earlier round (a confirmed "--" in
-    the source PDF, not missing data) and a real, much later cutoff in a
-    subsequent round - but it's worth a human glancing at when a branch or
-    category genuinely has no close options in a given tier."""
+def _warn_on_large_tier_gaps(tiers, rank, ratio=10):
+    """Console-only debug aid (never blocks or filters results): for every
+    Possible/Unlikely result, if its gap to the student's rank is more than
+    `ratio` times the LARGEST gap seen among that student's Strong Chance
+    results, print a warning. Meant to catch NO_DATA-driven jumps (like
+    Vidya Vikas Institute at cutoff 103,781) early during development, not
+    to be shown to the user."""
     strong = tiers.get("Strong Chance", [])
-    if not strong:
+    sc_gaps = [c["cutoff_rank"] - rank for c in strong]
+    if not sc_gaps:
         return
-    baseline = sum(c["cutoff_rank"] - rank for c in strong) / len(strong)
-    if baseline <= 0:
+    max_sc_gap = max(sc_gaps)
+    if max_sc_gap <= 0:
         return
     for tier_name in ("Possible", "Unlikely"):
-        results = tiers.get(tier_name, [])
-        if not results:
-            continue
-        gap = results[0]["cutoff_rank"] - rank
-        if gap > ratio * baseline:
-            print(
-                f"[SANITY CHECK] rank={rank} category={category_code} "
-                f"branch={branch_name!r}: {tier_name}'s closest cutoff is "
-                f"{gap:,.0f} away from the student's rank, "
-                f"{gap / baseline:.1f}x the Strong Chance average gap "
-                f"({baseline:,.0f}). Likely means this college had no seats "
-                f"in the earlier round (a real '--' in the source data), "
-                f"not a selection bug - but worth a look if it seems off."
-            )
+        for c in tiers.get(tier_name, []):
+            gap = c["cutoff_rank"] - rank
+            if gap > ratio * max_sc_gap:
+                print(
+                    f"WARNING: {c['college_name']} gap unusually large "
+                    f"({gap:,.0f}) relative to Strong Chance gaps "
+                    f"({[round(g, 1) for g in sc_gaps]}) - likely a NO_DATA "
+                    f"case, verify card text reflects this."
+                )
