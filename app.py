@@ -12,9 +12,9 @@ from seatsense.data import (
     branch_options,
     load_data,
     predict,
+    RESULTS_PER_TIER,
     SUBCAT_LABELS,
-    STRONG_BUFFER,
-    POSSIBLE_BUFFER,
+    TIER_ROUNDS,
 )
 
 st.set_page_config(page_title="SeatSense", page_icon="🎓", layout="centered")
@@ -23,6 +23,12 @@ TIER_STYLE = {
     "Strong Chance": {"bg": "#e6f4ea", "border": "#2e7d32", "text": "#1b5e20"},
     "Possible": {"bg": "#fff8e1", "border": "#c9a227", "text": "#8a6d00"},
     "Unlikely": {"bg": "#fdecea", "border": "#c62828", "text": "#8e1e1e"},
+}
+
+TIER_BLURB = {
+    "Strong Chance": "realistically allotted in Round 1 itself",
+    "Possible": "not likely in Round 1, but realistic by Round 2",
+    "Unlikely": "only realistic by Round 3, if at all",
 }
 
 
@@ -39,6 +45,7 @@ def render_card(result, rank):
     cutoff = result["cutoff_rank"]
     cutoff_str = f"{cutoff:,.1f}" if cutoff % 1 else f"{cutoff:,.0f}"
     rank_str = f"{rank:,}"
+    round_n = result["round"]
 
     st.markdown(
         f"""
@@ -53,7 +60,7 @@ def render_card(result, rank):
   </div>
   <div style="color:#444; margin-top:4px;">{branch}</div>
   <div style="color:{style['text']}; margin-top:6px; font-size:0.92rem;">
-    Last round's cutoff rank was {cutoff_str} &mdash; your rank is {rank_str}.
+    {tier} &mdash; Round {round_n} cutoff was rank {cutoff_str}, you are at rank {rank_str}.
   </div>
 </div>
 """,
@@ -98,23 +105,17 @@ def main():
 
         branch_name = st.selectbox("Preferred Course / Branch", options=branch_options(df))
 
-        top_n_label = st.radio(
-            "How many results to show?",
-            options=["Top 5", "Top 10", "Top 15"],
-            horizontal=True,
-        )
-        top_n = int(top_n_label.split()[1])
-
         submitted = st.form_submit_button("Find My Colleges", use_container_width=True)
 
     if not submitted:
         st.info(
             f"Fill in your rank and preferences above, then tap **Find My Colleges**.\n\n"
-            f"**How we rate your chances:** we compare your rank to each college's most "
-            f"recent round cutoff. If your rank is at least {int(STRONG_BUFFER*100)}% better "
-            f"(lower) than the cutoff, that's a **Strong Chance**. Within "
-            f"{int(POSSIBLE_BUFFER*100)}% either side of the cutoff is **Possible**. "
-            f"Well above the cutoff is **Unlikely**."
+            f"**How we rate your chances:** we compare your rank against each college's "
+            f"actual Round 1, Round 2 and Round 3 cutoffs. If your rank clears Round 1, "
+            f"that's a **Strong Chance** - realistically allotted right away. If it only "
+            f"clears Round 2, that's **Possible**. If it only clears Round 3, that's "
+            f"**Unlikely**. We show the 2 closest-matching colleges in each tier "
+            f"(6 total)."
         )
         return
 
@@ -130,22 +131,35 @@ def main():
         )
         return
 
-    results, year, round_ = predict(df, int(rank), category_code, branch_name, top_n)
+    tiers, year = predict(df, int(rank), category_code, branch_name)
 
     st.caption(
-        f"Based on {html.escape(branch_name)} cutoffs for category **{category_code}** "
-        f"from KCET {year} Round {round_} (the most recent round in our data)."
+        f"Comparing your rank against Round 1, 2 and 3 cutoffs for "
+        f"{html.escape(branch_name)} under category **{category_code}**, "
+        f"from KCET {year} (the most recent year with a full Round 1-3 dataset)."
     )
 
-    if not results:
+    total_results = sum(len(v) for v in tiers.values())
+    if total_results == 0:
         st.warning(
-            "No colleges offered this branch under this category in the latest round. "
-            "Try a different branch or category."
+            "No colleges offered this branch under this category in any round "
+            f"of {year}. Try a different branch or category."
         )
         return
 
-    for result in results:
-        render_card(result, int(rank))
+    for tier_name, round_n in TIER_ROUNDS:
+        results = tiers[tier_name]
+        st.subheader(tier_name)
+        st.caption(f"Round {round_n} comparison - {TIER_BLURB[tier_name]}.")
+        if not results:
+            st.markdown(
+                f"_No colleges found for this tier yet "
+                f"(no Round {round_n} match, or fewer than "
+                f"{RESULTS_PER_TIER} available)._"
+            )
+            continue
+        for result in results:
+            render_card(result, int(rank))
 
 
 if __name__ == "__main__":
