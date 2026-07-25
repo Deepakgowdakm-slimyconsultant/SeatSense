@@ -16,6 +16,7 @@ from seatsense.data import (
     SUBCAT_LABELS,
     TIER_ROUNDS,
 )
+from seatsense.branch_labels import branch_display_labels, expand_branch_label
 
 st.set_page_config(page_title="SeatSense", page_icon="🎓", layout="centered")
 
@@ -41,7 +42,7 @@ def render_card(result, rank):
     tier = result["tier"]
     style = TIER_STYLE[tier]
     college = html.escape(result["college_name"])
-    branch = html.escape(result["branch_name"])
+    branch = html.escape(expand_branch_label(result["branch_name"]))
     cutoff = result["cutoff_rank"]
     cutoff_str = f"{cutoff:,.1f}" if cutoff % 1 else f"{cutoff:,.0f}"
     rank_str = f"{rank:,}"
@@ -103,7 +104,13 @@ def main():
             value=False,
         )
 
-        branch_name = st.selectbox("Preferred Course / Branch", options=branch_options(df))
+        branches = branch_options(df)
+        branch_labels = branch_display_labels(branches)
+        branch_name = st.selectbox(
+            "Preferred Course / Branch",
+            options=branches,
+            format_func=lambda name: branch_labels[name],
+        )
 
         submitted = st.form_submit_button("Find My Colleges", use_container_width=True)
 
@@ -135,8 +142,9 @@ def main():
 
     st.caption(
         f"Comparing your rank against Round 1, 2 and 3 cutoffs for "
-        f"{html.escape(branch_name)} under category **{category_code}**, "
-        f"from KCET {year} (the most recent year with a full Round 1-3 dataset)."
+        f"{html.escape(expand_branch_label(branch_name))} under category "
+        f"**{category_code}**, from KCET {year} (the most recent year with "
+        f"a full Round 1-3 dataset)."
     )
 
     total_results = sum(len(v) for v in tiers.values())
