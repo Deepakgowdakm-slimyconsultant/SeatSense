@@ -75,6 +75,16 @@ def main():
 
     df = get_data()
 
+    # Outside the form (not inside st.form) so it reruns the page the moment
+    # it's toggled - the Category options below depend on it (Kalyana
+    # Karnataka and Rest of Karnataka use different category codes), and
+    # st.form only applies widget changes on submit, which would leave the
+    # Category list one step stale if the toggle lived inside the form.
+    is_hk = st.toggle(
+        "I am eligible for the Hyderabad-Karnataka (371J) reservation",
+        value=False,
+    )
+
     with st.form("seatsense_form"):
         rank = st.number_input(
             "Your KCET Rank",
@@ -86,7 +96,7 @@ def main():
 
         col1, col2 = st.columns(2)
         with col1:
-            base_options = available_bases(df)
+            base_options = available_bases(df, is_hk)
             base = st.selectbox(
                 "Category",
                 options=[code for code, _ in base_options],
@@ -98,11 +108,6 @@ def main():
                 options=[code for code, _ in SUBCAT_LABELS],
                 format_func=lambda code: dict(SUBCAT_LABELS)[code],
             )
-
-        is_hk = st.toggle(
-            "I am eligible for the Hyderabad-Karnataka (371J) reservation",
-            value=False,
-        )
 
         branches = branch_options(df)
         branch_labels = branch_display_labels(branches)
@@ -138,13 +143,14 @@ def main():
         )
         return
 
-    tiers, year = predict(df, int(rank), category_code, branch_name)
+    tiers, year = predict(df, int(rank), category_code, branch_name, is_hk)
+    seat_type = "Kalyana Karnataka" if is_hk else "Rest of Karnataka"
 
     st.caption(
         f"Comparing your rank against Round 1, 2 and 3 cutoffs for "
         f"{html.escape(expand_branch_label(branch_name))} under category "
-        f"**{category_code}**, from KCET {year} (the most recent year with "
-        f"a full Round 1-3 dataset)."
+        f"**{category_code}** ({seat_type} seats), from KCET {year} (the "
+        f"most recent year with a full Round 1-3 dataset)."
     )
 
     total_results = sum(len(v) for v in tiers.values())

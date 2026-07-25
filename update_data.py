@@ -1,63 +1,49 @@
 """
-Rerun extraction over everything currently in data/raw/ and rebuild
-data/processed/master_cutoffs.csv.
+Rebuild data/processed/master_cutoffs.csv from scratch:
+  1. Re-run extract_cutoffs.py over every PDF in data/raw/.
+  2. Backfill the seat_type column (derived deterministically from each
+     category code's H-suffix, not guessed).
+  3. Fold in every CSV under data/manual/ - data that didn't come from a
+     PDF (e.g. the 2025 Round 2/3 cutoffs, whose 4 source PDFs were never
+     uploaded and were supplied pre-extracted instead). Each manual CSV
+     must use the same schema as master_cutoffs.csv, minus branch_code.
+  4. De-dupe on (college_code, branch_code, branch_name, category, round,
+     year, seat_type) - branch_code is included because at least two
+     colleges (e.g. G M UNIVERSITY, E303) have two genuinely different
+     programs that share identical displayed branch_name text,
+     distinguishable only by branch_code; dropping it from the key would
+     silently discard one of them.
 
-Usage: drop new KCET cutoff PDFs into data/raw/ (same filename convention
-as the existing ones: <year>_<first|second|third>_round_<kalyana_karnataka|
-rest_of_karnataka>.pdf) and run:
-
+Usage:
     python3 update_data.py
 
-Design note: this rebuilds master_cutoffs.csv from the FULL set of PDFs in
-data/raw/ every time, rather than appending row-by-row to the existing
-CSV. That's what makes it safe to rerun - re-running extraction on files
-that were already processed always reproduces the same rows, so there's
-nothing to de-duplicate against. Dropping in new files just means the
-rebuilt CSV additionally contains whatever those new files contain. A
-de-dup pass still runs afterwards as a safety net, in case a future
-extraction run ever produces an overlapping row some other way (e.g. the
-same round released twice under different filenames).
+Safe to rerun any time: dropping new PDFs into data/raw/ and/or new CSVs
+into data/manual/ and rerunning always reproduces the same rows for
+already-processed sources, so there's nothing to duplicate against.
 """
 
-import csv
 import os
 import subprocess
 import sys
 
+import pandas as pd
+
+from branch_name_fixes import fix_branch_name
+
 RAW_DIR = "data/raw"
+MANUAL_DIR = "data/manual"
 MASTER_CSV = "data/processed/master_cutoffs.csv"
 EXTRACTION_LOG = "data/processed/update_data_last_run.log"
 
-
-def count_rows(path):
-    if not os.path.exists(path):
-        return 0
-    with open(path, newline="", encoding="utf-8") as f:
-        return sum(1 for _ in f) - 1  # minus header
+KEY_COLS = ["college_code", "branch_code", "branch_name", "category", "round", "year", "seat_type"]
 
 
-def dedupe(path):
-    with open(path, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    if not rows:
-        return 0
-
-    def key(r):
-        return (r["college_code"], r["branch_code"], r["branch_name"],
-                 r["category"], r["round"], r["year"], r["source_file"])
-
-    seen = {}
-    for r in rows:
-        seen[key(r)] = r  # keep the last occurrence
-    deduped = list(seen.values())
-
-    removed = len(rows) - len(deduped)
-    if removed:
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-            writer.writeheader()
-            writer.writerows(deduped)
-    return removed
+def derive_seat_type(category):
+    import re
+    m = re.match(r"^(1|2A|2B|3A|3B|GM|SC|ST)(G|K|R)?(H)?$", category)
+    if not m:
+        return None
+    return "Kalyana Karnataka" if m.group(3) == "H" else "Rest of Karnataka"
 
 
 def main():
@@ -66,9 +52,11 @@ def main():
     for f in pdfs:
         print(f"  - {f}")
 
-    before = count_rows(MASTER_CSV)
+    before = 0
+    if os.path.exists(MASTER_CSV):
+        before = sum(1 for _ in open(MASTER_CSV, encoding="utf-8")) - 1
 
-    print(f"\nRunning extract_cutoffs.py over all files "
+    print(f"\nRunning extract_cutoffs.py over all PDFs "
           f"(full log written to {EXTRACTION_LOG}) ...")
     os.makedirs(os.path.dirname(EXTRACTION_LOG), exist_ok=True)
     with open(EXTRACTION_LOG, "w", encoding="utf-8") as logf:
@@ -81,17 +69,42 @@ def main():
               f"See {EXTRACTION_LOG} for details.")
         sys.exit(result.returncode)
 
-    removed = dedupe(MASTER_CSV)
-    after = count_rows(MASTER_CSV)
+    master = pd.read_csv(MASTER_CSV, dtype={"category": str, "branch_code": str}, low_memory=False)
+    master["seat_type"] = master["category"].apply(derive_seat_type)
+    unresolved = master["seat_type"].isna().sum()
+    if unresolved:
+        print(f"WARNING: {unresolved} row(s) have a category code that doesn't "
+              f"match the expected KCET pattern - seat_type left blank for those.")
+
+    manual_files = []
+    if os.path.isdir(MANUAL_DIR):
+        manual_files = sorted(f for f in os.listdir(MANUAL_DIR) if f.lower().endswith(".csv"))
+
+    frames = [master]
+    for fname in manual_files:
+        path = os.path.join(MANUAL_DIR, fname)
+        print(f"Folding in manual data: {path}")
+        extra = pd.read_csv(path, dtype={"category": str}, low_memory=False)
+        extra["branch_name"] = extra["branch_name"].apply(fix_branch_name)
+        if "branch_code" not in extra.columns:
+            extra["branch_code"] = ""
+        frames.append(extra[master.columns])
+
+    combined = pd.concat(frames, ignore_index=True)
+    before_dedup = len(combined)
+    combined = combined.drop_duplicates(subset=KEY_COLS, keep="first")
+    duplicates_removed = before_dedup - len(combined)
+
+    combined.to_csv(MASTER_CSV, index=False)
+    after = len(combined)
 
     print(f"\nmaster_cutoffs.csv: {before} rows -> {after} rows ({after - before:+d})")
-    if removed:
-        print(f"Removed {removed} duplicate row(s) during the safety-net de-dup pass.")
+    if duplicates_removed:
+        print(f"Removed {duplicates_removed} duplicate row(s) during de-dup.")
 
-    with open(MASTER_CSV, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
-    years = sorted(set(r["year"] for r in rows))
-    print(f"Years covered: {', '.join(years)}")
+    years = sorted(combined["year"].unique())
+    print(f"Years covered: {', '.join(str(y) for y in years)}")
+    print(f"seat_type breakdown: {combined.groupby('seat_type').size().to_dict()}")
     print("Done. The app reads this file fresh on next load - no rebuild needed.")
 
 

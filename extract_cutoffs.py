@@ -41,6 +41,8 @@ from collections import defaultdict
 
 import pdfplumber
 
+from branch_name_fixes import fix_branch_name
+
 RAW_DIR = "data/raw"
 OUT_DIR = "data/processed"
 MASTER_CSV = os.path.join(OUT_DIR, "master_cutoffs.csv")
@@ -258,6 +260,7 @@ def process_file(path, meta, writer, errors, sample_rows):
                 return
             branch_name = " ".join(pending_row["name_parts"]).strip()
             branch_name = " ".join(branch_name.split())
+            branch_name = fix_branch_name(branch_name)
             if current_college_code is None or current_category_order is None:
                 errors.append(
                     f"{fname}: data row for branch '{branch_name}' skipped - "

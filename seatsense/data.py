@@ -53,11 +53,15 @@ RESULTS_PER_TIER = 2  # fixed 2+2+2 = 6 colleges total, per the round-based desi
 TIER_ROUNDS = [("Strong Chance", 1), ("Possible", 2), ("Unlikely", 3)]
 
 
+SEAT_TYPE_FOR_HK = {True: "Kalyana Karnataka", False: "Rest of Karnataka"}
+
+
 def load_data(path=MASTER_CSV):
     df = pd.read_csv(
         path,
         dtype={"college_code": str, "college_name": str, "branch_name": str,
-               "category": str, "branch_code": str, "source_file": str},
+               "category": str, "branch_code": str, "source_file": str,
+               "seat_type": str},
     )
     df["year"] = df["year"].astype(int)
     df["round"] = df["round"].astype(int)
@@ -74,9 +78,8 @@ def reference_year(df):
     against cutoffs shaped by a different candidate pool each time, which
     is exactly the kind of fabricated comparison we don't want to show.
     So this picks the newest year where a full 1/2/3 progression actually
-    exists. Right now that's 2024 (2025 only has Round 1 uploaded so far);
-    once 2025's Round 2 and 3 files are added and update_data.py is rerun,
-    this automatically shifts to 2025 - no code change needed.
+    exists, automatically shifting forward as more data is added - no code
+    change needed.
     """
     complete_years = [
         year for year, group in df.groupby("year")
@@ -109,8 +112,17 @@ def compose_category(df, base, subcat, is_hk):
     return None
 
 
-def available_bases(df):
-    present = {decompose_category(c)[0] for c in df["category"].unique() if decompose_category(c)}
+def available_bases(df, is_hk):
+    """Base categories that actually have data under the given HK-region
+    status. Both quota systems happen to use the same 8 bases today, but
+    this is still scoped by is_hk rather than hardcoded, so a future data
+    update where one quota drops or gains a base is reflected automatically
+    instead of silently offering an option with no real data behind it."""
+    present = {
+        decompose_category(c)[0]
+        for c in df["category"].unique()
+        if decompose_category(c) and decompose_category(c)[2] == is_hk
+    }
     return [(code, label) for code, label in BASE_LABELS if code in present]
 
 
@@ -134,7 +146,7 @@ def branch_options(df):
     return sorted(subset["branch_name"].dropna().unique().tolist())
 
 
-def predict(df, rank, category_code, branch_name):
+def predict(df, rank, category_code, branch_name, is_hk):
     """Compare `rank` against Round 1, 2 and 3 cutoffs (all from the same
     reference year) for every college offering `branch_name` under
     `category_code`. Each college is placed in the single best tier it
@@ -147,14 +159,23 @@ def predict(df, rank, category_code, branch_name):
     round's check - never guessed. Within each tier, the closest match to
     the student's rank is shown first, capped at RESULTS_PER_TIER (2).
 
+    `is_hk` gates the comparison to the matching seat_type ("Kalyana
+    Karnataka" vs "Rest of Karnataka") in addition to the category code -
+    the two are perfectly correlated in the data (every H-suffixed code is
+    Kalyana Karnataka and vice versa, verified), but filtering on both
+    means a row that ever disagreed between the two would be excluded
+    entirely rather than silently trusted on one signal.
+
     Returns (tiers, year) where tiers is a dict:
         {"Strong Chance": [...], "Possible": [...], "Unlikely": [...]}
     """
     year = reference_year(df)
+    seat_type = SEAT_TYPE_FOR_HK[is_hk]
     subset = df[
         (df["year"] == year)
         & (df["category"] == category_code)
         & (df["branch_name"] == branch_name)
+        & (df["seat_type"] == seat_type)
     ]
     subset = subset.drop_duplicates(subset=["college_code", "round"])
 
