@@ -26,6 +26,17 @@ what the dropdown displays.
 
 import re
 
+# Explicit, user-confirmed display labels for raw names the general token
+# expansion below deliberately leaves alone (usually because a literal
+# word-for-word expansion would collide with a different, distinct
+# branch already in the data - e.g. "Computers" -> "Computer Engineering"
+# would collide with the separate, existing "Computer Engineering" entry).
+# Checked for collisions against the rest of the label set the same way
+# as the automatic expansions.
+_EXPLICIT_OVERRIDES = {
+    "Computers": "Computer Science and Engineering",
+}
+
 # (abbreviation, full word) - unambiguous, standard dictionary-word
 # expansions only. Sorted longest-first so e.g. "Sc." is preferred over
 # "Sc" when both could match at the same position.
@@ -99,6 +110,8 @@ def expand_branch_label(name):
     possible - never a half-translated or guessed result."""
     if not isinstance(name, str):
         return name
+    if name in _EXPLICIT_OVERRIDES:
+        return _EXPLICIT_OVERRIDES[name]
     if _BTECH_PREFIX_RE.match(name.strip()):
         return name
 
