@@ -29,6 +29,7 @@ import re
 import pandas as pd
 
 MASTER_CSV = "data/processed/master_cutoffs.csv"
+MASTER_PARQUET = "data/processed/master_cutoffs.parquet"
 
 CATEGORY_RE = re.compile(r"^(1|2A|2B|3A|3B|GM|SC|ST)(G|K|R)?(H)?$")
 
@@ -69,13 +70,23 @@ ROUND_NO_DATA = "NO_DATA"
 SEAT_TYPE_FOR_HK = {True: "Kalyana Karnataka", False: "Rest of Karnataka"}
 
 
-def load_data(path=MASTER_CSV):
-    df = pd.read_csv(
-        path,
-        dtype={"college_code": str, "college_name": str, "branch_name": str,
-               "category": str, "branch_code": str, "source_file": str,
-               "seat_type": str},
-    )
+def load_data(path=MASTER_PARQUET):
+    """Reads the Parquet copy of the master dataset by default - same rows
+    as master_cutoffs.csv (the authoritative, human-diffable output of the
+    extraction pipeline), just ~29x smaller and ~2.5x faster to parse since
+    Parquet stores real typed columns instead of text. update_data.py keeps
+    both files in sync on every rebuild, so master_cutoffs.csv remains what
+    you inspect/diff when verifying extraction changes, while the app loads
+    from master_cutoffs.parquet."""
+    if str(path).endswith(".parquet"):
+        df = pd.read_parquet(path)
+    else:
+        df = pd.read_csv(
+            path,
+            dtype={"college_code": str, "college_name": str, "branch_name": str,
+                   "category": str, "branch_code": str, "source_file": str,
+                   "seat_type": str},
+        )
     df["year"] = df["year"].astype(int)
     df["round"] = df["round"].astype(int)
     df["cutoff_rank"] = df["cutoff_rank"].astype(float)

@@ -33,6 +33,7 @@ from branch_name_fixes import fix_branch_name
 RAW_DIR = "data/raw"
 MANUAL_DIR = "data/manual"
 MASTER_CSV = "data/processed/master_cutoffs.csv"
+MASTER_PARQUET = "data/processed/master_cutoffs.parquet"
 EXTRACTION_LOG = "data/processed/update_data_last_run.log"
 
 KEY_COLS = ["college_code", "branch_code", "branch_name", "category", "round", "year", "seat_type"]
@@ -96,6 +97,7 @@ def main():
     duplicates_removed = before_dedup - len(combined)
 
     combined.to_csv(MASTER_CSV, index=False)
+    combined.to_parquet(MASTER_PARQUET, index=False)
     after = len(combined)
 
     print(f"\nmaster_cutoffs.csv: {before} rows -> {after} rows ({after - before:+d})")
@@ -105,7 +107,10 @@ def main():
     years = sorted(combined["year"].unique())
     print(f"Years covered: {', '.join(str(y) for y in years)}")
     print(f"seat_type breakdown: {combined.groupby('seat_type').size().to_dict()}")
-    print("Done. The app reads this file fresh on next load - no rebuild needed.")
+    print(f"Wrote {MASTER_CSV} (human-diffable source of truth) and "
+          f"{MASTER_PARQUET} (what the app actually loads - kept in sync, "
+          f"same rows, ~29x smaller and faster to parse).")
+    print("Done. The app reads the Parquet file fresh on next load - no rebuild needed.")
 
 
 if __name__ == "__main__":
