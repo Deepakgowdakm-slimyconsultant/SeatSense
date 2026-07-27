@@ -14,14 +14,22 @@ HK-region) instead of a single cryptic code:
 
     <BASE><SUBCAT><REGION>
 
-    BASE   : 1, 2A, 2B, 3A, 3B, GM, SC, ST
+    BASE   : 1, 2A, 2B, 3A, 3B, GM, SC, ST, S1, S2, S3, S4
     SUBCAT : "" or "G" (General), "K" (Kannada Medium), "R" (Rural)
              - GM/SC/ST use a bare base for "General" (e.g. "GM")
-             - 1/2A/2B/3A/3B require an explicit "G" for "General"
-               (e.g. "1G") because the bare base never appears in the data
+             - 1/2A/2B/3A/3B/S1/S2/S3/S4 require an explicit "G" for
+               "General" (e.g. "1G", "S2G") because the bare base never
+               appears in the data
     REGION : "" (Rest of Karnataka) or "H" (Hyderabad-Karnataka / 371(j))
 
 e.g. "2AKH" = base 2A + Kannada Medium + Hyderabad-Karnataka.
+
+Starting in 2026, KEA split the single SC base into four sub-categories -
+S1 (SCA), S2 (SCB), S3 (SCC 80%), S4 (SCC 20%) - each with its own cutoffs.
+SC (2023-2025) and S1-S4 (2026+) are DIFFERENT bases with no code overlap;
+both are kept as distinct, valid bases here rather than one replacing the
+other, since a multi-year comparison needs to represent both eras' codes
+without guessing an equivalence between them.
 """
 
 import re
@@ -31,7 +39,7 @@ import pandas as pd
 MASTER_CSV = "data/processed/master_cutoffs.csv"
 MASTER_PARQUET = "data/processed/master_cutoffs.parquet"
 
-CATEGORY_RE = re.compile(r"^(1|2A|2B|3A|3B|GM|SC|ST)(G|K|R)?(H)?$")
+CATEGORY_RE = re.compile(r"^(1|2A|2B|3A|3B|GM|SC|ST|S1|S2|S3|S4)(G|K|R)?(H)?$")
 
 BASE_LABELS = [
     ("GM", "GM (General Merit)"),
@@ -42,6 +50,10 @@ BASE_LABELS = [
     ("3B", "Category 3B"),
     ("SC", "SC (Scheduled Caste)"),
     ("ST", "ST (Scheduled Tribe)"),
+    ("S1", "SCA (formerly SC)"),
+    ("S2", "SCB"),
+    ("S3", "SCC - 80%"),
+    ("S4", "SCC - 20%"),
 ]
 
 SUBCAT_LABELS = [
@@ -138,21 +150,32 @@ def compose_category(df, base, subcat, is_hk):
 
 def available_bases(df, is_hk):
     """Base categories that actually have data under the given HK-region
-    status. Both quota systems happen to use the same 8 bases today, but
-    this is still scoped by is_hk rather than hardcoded, so a future data
-    update where one quota drops or gains a base is reflected automatically
-    instead of silently offering an option with no real data behind it."""
+    status, scoped to reference_year(df) - the single year predict() actually
+    compares against. Scoping matters now that category codes can change
+    between years (KEA split SC into S1-S4 starting 2026): a base that only
+    exists in a year OTHER than the current reference year would otherwise
+    show up as a selectable dead end - offered in the dropdown, but matching
+    zero rows in every tier since predict() only ever queries reference_year().
+    This scoping means such a base simply stops appearing until
+    reference_year() itself advances to a year that has it - no separate
+    manual step needed."""
+    year = reference_year(df)
+    year_df = df[df["year"] == year]
     present = {
         decompose_category(c)[0]
-        for c in df["category"].unique()
+        for c in year_df["category"].unique()
         if decompose_category(c) and decompose_category(c)[2] == is_hk
     }
     return [(code, label) for code, label in BASE_LABELS if code in present]
 
 
 def available_subcats(df, base, is_hk):
+    """Sub-categories for `base` that exist in reference_year(df) - see
+    available_bases() for why this is year-scoped rather than dataset-wide."""
+    year = reference_year(df)
+    year_df = df[df["year"] == year]
     present = set()
-    for c in df["category"].unique():
+    for c in year_df["category"].unique():
         parsed = decompose_category(c)
         if parsed and parsed[0] == base and parsed[2] == is_hk:
             present.add(parsed[1])

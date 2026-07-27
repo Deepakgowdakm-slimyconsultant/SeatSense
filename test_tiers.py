@@ -299,6 +299,70 @@ def run():
             detail=f"E003={e003['cutoff_rank']} E048={e048['cutoff_rank']}",
         )
 
+    # ------------------------------------------------------------------
+    # T11: merging 2026 Round 1 data must be inert for reference_year() -
+    # the decision was "keep everyone on 2025 for now" (no 2026 R2/R3
+    # exists yet, so no cross-year blend was built). This must hold even
+    # though year=2026 rows are present in the dataset.
+    # ------------------------------------------------------------------
+    print()
+    check("T11: reference_year() is still 2025 after merging 2026 Round 1 data", year == 2025, detail=str(year))
+    check("T11: year=2026 rows ARE present in the dataset (merge succeeded)", (df["year"] == 2026).any())
+
+    # ------------------------------------------------------------------
+    # T12/T13 (redefined from the original spec - see note below): for a
+    # NON-SC category, Strong Chance must still come from 2025 Round 1,
+    # NOT 2026. The original spec's T13 asserted the opposite (2026 Round 1
+    # used for Strong Chance), but that assumed a cross-year fallback
+    # mechanism the user explicitly declined to build this pass ("keep
+    # everyone on 2025 for now"). Asserting the original T13 literally
+    # would contradict the chosen design, so this asserts what's actually
+    # true under that decision instead - flagged, not silently swapped.
+    # ------------------------------------------------------------------
+    print()
+    non_sc_tiers, non_sc_year = predict(df, 5000, "GM", "COMPUTER SCIENCE AND ENGINEERING", False)
+    check(
+        "T12 (was T13 in the original spec - see comment above): non-SC category "
+        "Strong Chance uses year=2025, not 2026 (per 'keep everyone on 2025 for now')",
+        non_sc_year == 2025,
+        detail=str(non_sc_year),
+    )
+
+    # ------------------------------------------------------------------
+    # T13: S1-S4 (former SC, Option B categories) must NOT appear as
+    # selectable dropdown options while reference_year() is 2025 - they
+    # have zero rows in 2025, so offering them would be a dead end (see
+    # available_bases()'s year-scoping fix). This is the concrete,
+    # buildable consequence of "keep everyone on 2025 for now": Option B's
+    # card-text behavior (explicitly explaining no Round 2/3 comparison is
+    # possible) has nothing to attach to yet, because there is no live path
+    # to reach an SC-family category at all until reference_year() itself
+    # advances to 2026 - which won't happen until 2026 Round 2/3 exists.
+    # ------------------------------------------------------------------
+    print()
+    from seatsense.data import available_bases
+
+    bases_rok = dict(available_bases(df, False))
+    check("T13: S1 (SCA) is NOT offered in the category dropdown this cycle", "S1" not in bases_rok)
+    check("T13: S2 (SCB) is NOT offered in the category dropdown this cycle", "S2" not in bases_rok)
+    check("T13: S3 (SCC 80%) is NOT offered in the category dropdown this cycle", "S3" not in bases_rok)
+    check("T13: S4 (SCC 20%) is NOT offered in the category dropdown this cycle", "S4" not in bases_rok)
+    check("T13: SC (2023-2025 codes) is still offered, unaffected", "SC" in bases_rok)
+
+    # Defensive check only (not reachable via the UI given the check above):
+    # predict() must not crash if ever called directly with an S1-S4 code -
+    # it should return cleanly empty tiers (no rows in 2025 for that code),
+    # not raise. No "situation-explaining" card text exists for this path
+    # yet - that part of Option B is genuinely deferred, not implemented,
+    # since it was scoped to the cross-year blend that was declined.
+    sc_family_tiers, _ = predict(df, 5000, "S2G", "COMPUTER SCIENCE AND ENGINEERING", False)
+    check(
+        "T13: predict() with an S1-S4 code doesn't crash and returns cleanly empty tiers "
+        "(not reachable via the dropdown, but must not break if called directly)",
+        all(len(v) == 0 for v in sc_family_tiers.values()),
+        detail=str(sc_family_tiers),
+    )
+
     print()
     print("=" * 70)
     if failures:
