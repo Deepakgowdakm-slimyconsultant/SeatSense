@@ -4,8 +4,10 @@ Assertion-based tests for seatsense.data.predict(). Run with:
 """
 
 from seatsense.data import (
+    available_bases,
     load_data,
     predict,
+    reference_year,
     ROUND_CLEARED,
     ROUND_FAILED,
     ROUND_NO_DATA,
@@ -340,8 +342,6 @@ def run():
     # advances to 2026 - which won't happen until 2026 Round 2/3 exists.
     # ------------------------------------------------------------------
     print()
-    from seatsense.data import available_bases
-
     bases_rok = dict(available_bases(df, False))
     check("T13: S1 (SCA) is NOT offered in the category dropdown this cycle", "S1" not in bases_rok)
     check("T13: S2 (SCB) is NOT offered in the category dropdown this cycle", "S2" not in bases_rok)
@@ -361,6 +361,43 @@ def run():
         "(not reachable via the dropdown, but must not break if called directly)",
         all(len(v) == 0 for v in sc_family_tiers.values()),
         detail=str(sc_family_tiers),
+    )
+
+    # ------------------------------------------------------------------
+    # T14: same as T11-T13, but for the Kalyana Karnataka (HK) side, added
+    # once the companion 2026 KK file was merged. The Step 3 decision
+    # ("keep everyone on 2025 for now") was explicitly NOT to be
+    # re-litigated for H-suffixed codes - this confirms the SAME behavior
+    # holds for HK without any separate code path or special-casing.
+    # ------------------------------------------------------------------
+    print()
+    check(
+        "T14: reference_year() is still 2025 after merging 2026 Kalyana Karnataka data too",
+        reference_year(df) == 2025,
+        detail=str(reference_year(df)),
+    )
+
+    hk_tiers, hk_year = predict(df, 20000, "2AH", "COMPUTER SCIENCE AND ENGINEERING", True)
+    check(
+        "T14: normal HK category (2AH, unaffected by the SC split) still returns real "
+        "2025 results end-to-end - no regression from adding the second 2026 file",
+        hk_year == 2025 and sum(len(v) for v in hk_tiers.values()) > 0,
+        detail=f"year={hk_year} total_results={sum(len(v) for v in hk_tiers.values())}",
+    )
+
+    bases_hk = dict(available_bases(df, True))
+    check("T14: S1H (SCA) is NOT offered in the HK category dropdown this cycle", "S1" not in bases_hk)
+    check("T14: S2H (SCB) is NOT offered in the HK category dropdown this cycle", "S2" not in bases_hk)
+    check("T14: S3H (SCC 80%) is NOT offered in the HK category dropdown this cycle", "S3" not in bases_hk)
+    check("T14: S4H (SCC 20%) is NOT offered in the HK category dropdown this cycle", "S4" not in bases_hk)
+    check("T14: SC (2023-2025 HK codes, i.e. SCH/SCKH/SCRH) is still offered, unaffected", "SC" in bases_hk)
+
+    s1h_tiers, _ = predict(df, 20000, "S1H", "COMPUTER SCIENCE AND ENGINEERING", True)
+    check(
+        "T14: predict() with S1H directly doesn't crash and returns cleanly empty tiers "
+        "(same consistent behavior as S1G on the Rest-of-Karnataka side - not re-litigated)",
+        all(len(v) == 0 for v in s1h_tiers.values()),
+        detail=str(s1h_tiers),
     )
 
     print()
